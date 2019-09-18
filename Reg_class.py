@@ -68,15 +68,20 @@ def plotter(x, y, z, save= False):
     if save != False:
         plt.savefig(str(save) + '.pdf', format='pdf')
     plt.show()
-'''
-def MSE(z, z_pred):
-    return np.sum((z - z_pred)**2)/z.shape[0]
-'''
 
-def bias(z, z_pred):
+def MSE_func(z, z_pred):
+    return np.sum((z - z_pred)**2)/z.shape[0]
+
+def R2_func(z, z_pred):
+    S1 = np.sum((z - z_pred)**2)
+    z_mean = np.sum(z)/z.shape[0]
+    S2 = np.sum((z - z_mean)**2)
+    return 1 - S1/S2
+
+def bias_func(z, z_pred):
     return np.sum(z_pred - z)/z.shape[0]
 
-def variance(z):
+def variance_func(z):
     z_mean = np.sum(z)/np.sum(z.shape)
     return np.sum((z - z_mean)**2)/z.shape[0]  
 
@@ -139,10 +144,27 @@ class Polyfit:
             return
         
         return self.reg
+    
      
+    
+    def MSE(self):            
+        return MSE_func(self.z, self.reg[1])
+    
+    def R2(self):
+        return R2_func(self.z, self.reg[1])
+    
+    def bias(self):
+        return bias_func(self.z, self.reg[1])
+    
+    def variance(self):
+        return variance_func(self.reg[1])
+    
+    def sigma2(self):
+        return variance_func(self.z)
+    
     def beta_variance(self):
-        X, z = self.X, self.z
-        sigma2 = variance(z)
+        X = self.X
+        sigma2 = self.sigma2()
         '''
         Sigma, VT = np.linalg.svd(X)[1:]
         D2 = 1/(Sigma*Sigma)
@@ -155,21 +177,21 @@ class Polyfit:
         inv = np.diag(np.linalg.inv(np.matmul(X.T, X)))
         return sigma2*np.sqrt(inv)
     
-    def MSE(self):
-        z = self.z
-        z_pred = self.reg[1]
-        return np.sum((z - z_pred)**2)/z.shape[0]
-    
-    def R2(self):
-        z = self.z
-        z_pred = self.reg[1]
-        S1 = np.sum((z - z_pred)**2)
-        z_mean = np.sum(z)/z.shape[0]
-        S2 = np.sum((z - z_mean)**2)
-        return 1 - S1/S2
-    
-    
-        
+    def kfold_xval(self,X, z, k, Model = 'OLS', lambd=0):
+        MSE_k = np.zeros(k)
+        R2_k = MSE_k.copy()
+        X_split, z_split = kfold_split(X, z, k)
+        for i in range(k):
+            X_train, z_train = np.delete(X_split, i, 0), np.delete(z_split, i, 0)
+            X_test, z_test = X_split[i], z_split[i]            
+            
+            for j in range(k-1):
+                beta_train = self.fit(X_train[j], z_train[j], model=Model, lm=lambd)[0]
+                z_pred =  X_test.dot(beta_train)
+                MSE_k[i] += MSE_func(z_test, z_pred)
+                R2_k[i] +=  R2_func(z_test, z_pred)
+                    
+        return MSE_k/(k-1), R2_k/(k-1)
                     
             
         
