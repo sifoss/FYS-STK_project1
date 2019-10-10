@@ -11,7 +11,7 @@ def FrankeFunction(x,y):
     return term1 + term2 + term3 + term4
 
 @jit
-def DesignMatrix(x, y, px, py):
+def DesignMatrix(x, y, p):
 
     '''
     Takes in predictor varaiables and max order for each variable for 2d 
@@ -19,28 +19,41 @@ def DesignMatrix(x, y, px, py):
     Assumes x, y are one dimensional N**2 vectors.
     '''
     DM = np.zeros_like(x)
-    for i in range(px+1):
-        for j in range(py+1):
+    for i in range(p+1):
+        for j in range(p+1):
             DM = np.c_[DM, (x**i)*(y**j)]
     return DM[:, 1:]
 
-def kfold_split(X, z, k):
-    
-    n = z.shape[0]
-    index = np.arange(n)
+def kfold_split(N, n_folds=3):
+    '''
+    Returns arrays of indices for kfold splitting.
+    '''
+    index = np.arange(N)
     np.random.shuffle(index)
-    z_split = np.array_split(z[index], k)
-    X_split = np.array_split(X[index], k)
-    return X_split, z_split
+    k_test = np.array_split(index, n_folds)
+    k_train = []
+    for fold in range(n_folds):
+        k_train.append(np.concatenate(np.delete(k_test, fold, axis=0)))
+    return k_train, k_test
 
-def train_test_split(X, z, split_frac = 0.75):
-    n = z.shape[0]
+def train_test_split(*args, split_frac = 0.75):
+    '''
+    Returns [X_train, z_train, X_test, z_test]
+    '''
+    n = args[0].shape[0]
     index = np.arange(n)
     np.random.shuffle(index)
-    z_shuff = z[index]
-    X_shuff = X[index]
-    k_split = round(z.shape[0]*split_frac)
-    return X_shuff[:k_split], z_shuff[:k_split], X_shuff[k_split:], z_shuff[k_split:]    
+    k_split = round(n*split_frac)
+    train, test = np.empty((len(args), k_split, 1)), np.empty((len(args), n-k_split, 1))
+    
+    for i in range(len(args)):
+        train[i,:, :] = args[i][index][:k_split].reshape(int(n*split_frac), 1)
+        test[i,:, :] = args[i][index][k_split:].reshape(int(n) - int(n*split_frac), 1)
+    return train, test
+    
+    
+    
+    return train, test   
     
 
 def plotter(x, y, z, save= False):
@@ -69,21 +82,15 @@ def plotter(x, y, z, save= False):
         plt.savefig(str(save) + '.pdf', format='pdf')
     plt.show()
 
-def MSE_func(z, z_pred):
-    return np.sum((z - z_pred)**2)/z.shape[0]
+def MSE(z, z_pred):
+    return np.mean((z - z_pred)**2)
 
-def R2_func(z, z_pred):
+def R2(z, z_pred):
     S1 = np.sum((z - z_pred)**2)
-    z_mean = np.sum(z)/z.shape[0]
-    S2 = np.sum((z - z_mean)**2)
+    S2 = np.sum((z - np.mean(z))**2)
     return 1 - S1/S2
 
-def bias_func(z, z_pred):
-    return np.sum(z_pred - z)/z.shape[0]
 
-def variance_func(z):
-    z_mean = np.sum(z)/np.sum(z.shape)
-    return np.sum((z - z_mean)**2)/z.shape[0]  
 
 @jit    
 def OLS(X, z):
@@ -117,10 +124,10 @@ def ridge(X, z, lmbda=0):
     return ridge_beta, ridge_fit
 
 def lasso(X, z, lmbda=0):
-    lasso_reg = Lasso(alpha=lmbda)
+    lasso_reg = Lasso(alpha=lmbda, fit_intercept=False)
     lasso_reg.fit(X, z)
     lasso_fit = lasso_reg.predict(X)
-    lasso_beta = lasso_reg.coef_
+    lasso_beta = lasso_reg.coef_ 
     
     return lasso_beta, lasso_fit
   
@@ -133,6 +140,7 @@ class Polyfit:
     def fit(self,X, z,  model, lm=0):
         
         self.X, self.z = X, z
+        self.p = X.shape[1]
         
         if model == 'OLS':
             self.reg =  OLS(X, z)
@@ -144,54 +152,12 @@ class Polyfit:
             return
         
         return self.reg
+
+    @jit
+    def predict(self, X):
+        return np.matmul(X, self.reg[0]) 
     
-     
-    
-    def MSE(self):            
-        return MSE_func(self.z, self.reg[1])
-    
-    def R2(self):
-        return R2_func(self.z, self.reg[1])
-    
-    def bias(self):
-        return bias_func(self.z, self.reg[1])
-    
-    def variance(self):
-        return variance_func(self.reg[1])
-    
-    def sigma2(self):
-        return variance_func(self.z)
-    
-    def beta_variance(self):
-        X = self.X
-        sigma2 = self.sigma2()
-        '''
-        Sigma, VT = np.linalg.svd(X)[1:]
-        D2 = 1/(Sigma*Sigma)
-        C = np.zeros_like(VT)
-        for i in range(VT.shape[0]):
-            C[i, :] = D2[i]*VT[i, :]
-            
-        return sigma2*np.sqrt(np.diag(np.matmul(VT.T, C)))
-        '''
-        inv = np.diag(np.linalg.inv(np.matmul(X.T, X)))
-        return sigma2*np.sqrt(inv)
-    
-    def kfold_xval(self,X, z, k, Model = 'OLS', lambd=0):
-        MSE_k = np.zeros(k)
-        R2_k = MSE_k.copy()
-        X_split, z_split = kfold_split(X, z, k)
-        for i in range(k):
-            X_train, z_train = np.delete(X_split, i, 0), np.delete(z_split, i, 0)
-            X_test, z_test = X_split[i], z_split[i]            
-            
-            for j in range(k-1):
-                beta_train = self.fit(X_train[j], z_train[j], model=Model, lm=lambd)[0]
-                z_pred =  X_test.dot(beta_train)
-                MSE_k[i] += MSE_func(z_test, z_pred)
-                R2_k[i] +=  R2_func(z_test, z_pred)
-                    
-        return MSE_k/(k-1), R2_k/(k-1)
+
                     
             
         
